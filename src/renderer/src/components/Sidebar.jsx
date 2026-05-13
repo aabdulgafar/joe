@@ -14,7 +14,7 @@ function Sidebar({ activeTab, setActiveTab, user, logout }) {
     { id: 'settings', label: 'Settings', icon: Settings, roles: ['super_admin'] },
   ]
 
-  const filteredMenu = menuItems.filter(item => item.roles.includes(user?.role))
+  const filteredMenu = menuItems.filter(item => item.roles.includes(user?.role || ''))
 
   return (
     <div className="w-64 bg-gray-900 text-white min-h-screen flex flex-col">
