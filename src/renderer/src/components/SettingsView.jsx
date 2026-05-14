@@ -42,13 +42,14 @@ function SettingsView() {
 
   const handleAddUser = async (e) => {
     e.preventDefault()
-    const result = await window.api.users.add(newUser)
+    const result = await window.api.users.create(newUser)
     if (result.success) {
       setIsModalOpen(false)
       fetchUsers()
       setNewUser({ username: '', password: '', role: 'storekeeper' })
+      alert('User created successfully!')
     } else {
-      alert(result.message)
+      alert('Setup Error: ' + result.message)
     }
   }
 

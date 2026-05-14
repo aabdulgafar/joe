@@ -1,70 +1,101 @@
 import { supabase } from './supabaseClient'
 
+const handleResponse = async (promise) => {
+  try {
+    const { data, error } = await promise
+    if (error) throw error
+    return { success: true, data }
+  } catch (error) {
+    console.error('API Error:', error)
+    return { success: false, message: error.message || 'An unexpected error occurred' }
+  }
+}
+
 export const api = {
   inventory: {
     getItems: async () => {
       const { data, error } = await supabase
         .from('items')
         .select('*, suppliers(name)')
+        .order('name')
+      
       if (error) throw error
-      // Flatten the supplier name to match existing structure
       return data.map(item => ({
         ...item,
         supplierName: item.suppliers?.name
       }))
     },
-    addItem: async (item) => {
+    getLowStock: async () => {
       const { data, error } = await supabase
         .from('items')
-        .insert([item])
-        .select()
-      if (error) return { success: false, message: error.message }
-      return { success: true, id: data[0].id }
+        .select('*')
+        .lte('quantity', supabase.raw('threshold')) // This might not work directly in JS client
+        // Alternative: Fetch all and filter, or use an RPC
+      
+      // Since supabase-js doesn't support col vs col comparison easily without RPC:
+      const { data: allItems, error: allErr } = await supabase.from('items').select('*')
+      if (allErr) throw allErr
+      return allItems.filter(i => i.quantity <= i.threshold)
+    },
+    addItem: async (item) => {
+      return handleResponse(
+        supabase.from('items').insert([item]).select()
+      )
+    },
+    updateItem: async (id, updates) => {
+      return handleResponse(
+        supabase.from('items').update(updates).eq('id', id).select()
+      )
+    },
+    deleteItem: async (id) => {
+      return handleResponse(
+        supabase.from('items').delete().eq('id', id)
+      )
     },
     updateStock: async ({ itemId, type, quantity, userId, cost, revenue, customerId, supplierId }) => {
-      // 1. Record transaction
-      const { error: transError } = await supabase
-        .from('transactions')
-        .insert([{
-          item_id: itemId,
-          type,
-          quantity,
-          cost: cost || 0,
-          revenue: revenue || 0,
-          user_id: userId,
-          customer_id: customerId,
-          supplier_id: supplierId
-        }])
-      
-      if (transError) return { success: false, message: transError.message }
+      try {
+        // 1. Record transaction
+        const { error: transError } = await supabase
+          .from('transactions')
+          .insert([{
+            item_id: itemId,
+            type,
+            quantity,
+            cost: cost || 0,
+            revenue: revenue || 0,
+            user_id: userId,
+            customer_id: customerId,
+            supplier_id: supplierId
+          }])
+        
+        if (transError) throw transError
 
-      // 2. Update quantity
-      const adjustment = type === 'IN' ? quantity : -quantity
-      // In Supabase, we can use RPC or fetch then update. 
-      // For simplicity and since RLS is on, we'll fetch then update or use a custom RPC if available.
-      // Better way: Increment using postgres logic if possible, or just standard update.
-      const { data: item, error: fetchError } = await supabase
-        .from('items')
-        .select('quantity')
-        .eq('id', itemId)
-        .single()
-      
-      if (fetchError) return { success: false, message: fetchError.message }
+        // 2. Update quantity (using a more atomic approach if possible, but standard fetch-update for now)
+        const { data: item, error: fetchError } = await supabase
+          .from('items')
+          .select('quantity')
+          .eq('id', itemId)
+          .single()
+        
+        if (fetchError) throw fetchError
 
-      const { error: updateError } = await supabase
-        .from('items')
-        .update({ quantity: item.quantity + adjustment })
-        .eq('id', itemId)
+        const adjustment = type === 'IN' ? quantity : -quantity
+        const { error: updateError } = await supabase
+          .from('items')
+          .update({ quantity: item.quantity + adjustment })
+          .eq('id', itemId)
 
-      if (updateError) return { success: false, message: updateError.message }
-      
-      return { success: true }
+        if (updateError) throw updateError
+        
+        return { success: true }
+      } catch (error) {
+        console.error('Stock Update Error:', error)
+        return { success: false, message: error.message }
+      }
     }
   },
   finance: {
     getSummary: async () => {
-      // We can use RPC or multiple queries. Supabase doesn't support complex aggregations directly in JS well.
-      // Best to use a Postgres View or RPC. For now, we'll use a simple approach.
       const { data, error } = await supabase
         .from('transactions')
         .select('revenue, cost')
@@ -103,15 +134,17 @@ export const api = {
         .select('*')
         .order('name')
       if (error) throw error
-      return data // Note: 'last_delivery_date' would need another query or a view
+      return data
     },
     add: async (supplier) => {
-      const { data, error } = await supabase
-        .from('suppliers')
-        .insert([supplier])
-        .select()
-      if (error) return { success: false, message: error.message }
-      return { success: true, id: data[0].id }
+      return handleResponse(
+        supabase.from('suppliers').insert([supplier]).select()
+      )
+    },
+    update: async (id, updates) => {
+      return handleResponse(
+        supabase.from('suppliers').update(updates).eq('id', id).select()
+      )
     }
   },
   customers: {
@@ -124,23 +157,63 @@ export const api = {
       return data
     },
     add: async (customer) => {
-      const { data, error } = await supabase
-        .from('customers')
-        .insert([customer])
-        .select()
-      if (error) return { success: false, message: error.message }
-      return { success: true, id: data[0].id }
+      return handleResponse(
+        supabase.from('customers').insert([customer]).select()
+      )
+    },
+    update: async (id, updates) => {
+      return handleResponse(
+        supabase.from('customers').update(updates).eq('id', id).select()
+      )
     }
   },
   users: {
     get: async () => {
-      // Supabase users are in auth.users, usually you create a 'profiles' table.
-      // For now, let's assume we use profiles if it exists, otherwise return empty.
-      return [] 
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, role, is_approved')
+        .order('username')
+      if (error) throw error
+      return data
     },
-    add: async (user) => {
-      // Supabase Auth handles user creation
-      return { success: false, message: 'Use Supabase Auth to add users' }
+    create: async ({ username, password, role }) => {
+      // For web version, we use signUp. 
+      // Note: This will not work if the admin is already logged in (it will log them out)
+      // unless we use a separate supabase client or a dedicated edge function.
+      // For simplicity in this "Sync" version, we'll try to use a service-like approach if possible
+      // or just inform the user.
+      const email = `${username}@gmail.com`
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { role, username }
+        }
+      })
+      if (error) return { success: false, message: error.message }
+      
+      // The trigger handles profile creation, but we might want to force update the role
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ role, is_approved: true })
+        .eq('id', data.user.id)
+      
+      return { success: !profileError, message: profileError?.message }
+    },
+    updateRole: async (userId, role) => {
+      return handleResponse(
+        supabase.from('profiles').update({ role }).eq('id', userId)
+      )
+    },
+    approve: async (userId) => {
+      return handleResponse(
+        supabase.from('profiles').update({ is_approved: true }).eq('id', userId)
+      )
+    },
+    delete: async (userId) => {
+      return handleResponse(
+        supabase.from('profiles').delete().eq('id', userId)
+      )
     }
   },
   settings: {
@@ -150,13 +223,13 @@ export const api = {
         .select('value')
         .eq('key', key)
         .single()
+      if (error && error.code !== 'PGRST116') throw error 
       return data
     },
     save: async ({ key, value }) => {
-      const { error } = await supabase
-        .from('settings')
-        .upsert({ key, value })
-      return { success: true }
+      return handleResponse(
+        supabase.from('settings').upsert({ key, value })
+      )
     }
   },
   logs: {
@@ -166,12 +239,17 @@ export const api = {
         .select('*')
         .order('timestamp', { ascending: false })
         .limit(50)
+      if (error) throw error
       return data
     }
   },
   system: {
     getDbPath: async () => 'Cloud (Supabase)',
     selectDbPath: async () => null,
-    saveDbPath: async () => true
+    saveDbPath: async () => true,
+    getDbStatus: async () => {
+      const { error } = await supabase.from('settings').select('key').limit(1)
+      return { connected: !error, error: error?.message }
+    }
   }
 }

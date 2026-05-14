@@ -23,6 +23,12 @@ function IntakeView() {
 
   const handleIntake = async (e) => {
     e.preventDefault()
+    
+    if (!intake.itemId || !intake.supplierId) {
+      alert('Please select both a product and a supplier.')
+      return
+    }
+
     const result = await window.api.inventory.updateStock({
       itemId: parseInt(intake.itemId),
       type: 'IN',
@@ -36,6 +42,8 @@ function IntakeView() {
       alert('Stock intake recorded successfully!')
       fetchData()
       setIntake({ itemId: '', supplierId: '', quantity: 1, cost: 0 })
+    } else {
+      alert('Error recording intake: ' + result.message)
     }
   }
 

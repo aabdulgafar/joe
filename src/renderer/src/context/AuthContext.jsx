@@ -7,26 +7,69 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const checkUserRole = async (sessionUser) => {
+    // MASTER ADMIN BYPASS: If email is admin@gmail.com, always grant super_admin
+    if (sessionUser.email === 'admin@gmail.com') {
+      return { 
+        ...sessionUser, 
+        role: 'super_admin', 
+        username: 'admin',
+        is_approved: true 
+      }
+    }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, username, is_approved')
+      .eq('id', sessionUser.id)
+      .single()
+
+    if (profile) {
+      if (profile.is_approved) {
+        return { ...sessionUser, role: profile.role, username: profile.username || sessionUser.email }
+      } else {
+        await supabase.auth.signOut()
+        return null
+      }
+    } else {
+      // Fallback for first user if profile table exists but is empty
+      const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true })
+      if (count === 0 || count === null) {
+        return { ...sessionUser, role: 'super_admin', username: sessionUser.email.split('@')[0], is_approved: true }
+      }
+      return { ...sessionUser, role: 'none', username: sessionUser.email }
+    }
+  }
+
   useEffect(() => {
-    // Check active sessions and sets the user
     const getSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
-      setUser(session?.user ?? null)
+      if (session?.user) {
+        const enrichedUser = await checkUserRole(session.user)
+        setUser(enrichedUser)
+      } else {
+        setUser(null)
+      }
       setLoading(false)
     }
 
     getSession()
 
-    // Listen for changes on auth state (logged in, signed out, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        const enrichedUser = await checkUserRole(session.user)
+        setUser(enrichedUser)
+      } else {
+        setUser(null)
+      }
       setLoading(false)
     })
 
     return () => subscription.unsubscribe()
   }, [])
 
-  const login = async (email, password) => {
+  const login = async (identifier, password) => {
+    const email = identifier.includes('@') ? identifier : `${identifier}@gmail.com`
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,

@@ -1,5 +1,3 @@
--- SQL Migration Script for Supabase (PostgreSQL)
-
 -- 1. Tables
 CREATE TABLE IF NOT EXISTS suppliers (
   id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
@@ -72,56 +70,54 @@ CREATE TABLE IF NOT EXISTS profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Trigger to create profile on signup (Defaulting to NOT approved)
+-- 2. Auth Trigger Function
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
   INSERT INTO public.profiles (id, username, role, is_approved)
-  VALUES (new.id, new.email, 'manager', FALSE);
+  VALUES (new.id, split_part(new.email, '@', 1), 'manager', FALSE);
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 3. Policies
+-- 3. Attach Trigger
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 4. Policies (Row Level Security)
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- Profiles Policies
 CREATE POLICY "Public profiles are viewable by authenticated users" ON profiles FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Users can update their own profile" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 CREATE POLICY "Super Admins have full control over profiles" ON profiles FOR ALL TO authenticated USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'super_admin' AND is_approved = TRUE)
 );
 
--- Update all other table policies to check for is_approved = TRUE
-DROP POLICY IF EXISTS "Allow authenticated access to suppliers" ON suppliers;
+-- General Table Policies (Require Approval)
 CREATE POLICY "Allow approved access to suppliers" ON suppliers FOR ALL TO authenticated USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_approved = TRUE)
 );
-
-DROP POLICY IF EXISTS "Allow authenticated access to customers" ON customers;
 CREATE POLICY "Allow approved access to customers" ON customers FOR ALL TO authenticated USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_approved = TRUE)
 );
-
-DROP POLICY IF EXISTS "Allow authenticated access to items" ON items;
 CREATE POLICY "Allow approved access to items" ON items FOR ALL TO authenticated USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_approved = TRUE)
 );
-
-DROP POLICY IF EXISTS "Allow authenticated access to transactions" ON transactions;
 CREATE POLICY "Allow approved access to transactions" ON transactions FOR ALL TO authenticated USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_approved = TRUE)
 );
-ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE email_logs ENABLE ROW LEVEL SECURITY;
-
--- 3. Policies (Example: Authenticated users can read/write)
--- For a basic setup, we allow all authenticated users. 
--- In a real app, you'd refine these based on the 'role' which can be stored in 'profiles' table.
-
-CREATE POLICY "Allow authenticated access to suppliers" ON suppliers FOR ALL TO authenticated USING (true);
-CREATE POLICY "Allow authenticated access to customers" ON customers FOR ALL TO authenticated USING (true);
-CREATE POLICY "Allow authenticated access to items" ON items FOR ALL TO authenticated USING (true);
-CREATE POLICY "Allow authenticated access to transactions" ON transactions FOR ALL TO authenticated USING (true);
-CREATE POLICY "Allow authenticated access to settings" ON settings FOR ALL TO authenticated USING (true);
-CREATE POLICY "Allow authenticated access to email_logs" ON email_logs FOR ALL TO authenticated USING (true);
+CREATE POLICY "Allow approved access to settings" ON settings FOR ALL TO authenticated USING (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_approved = TRUE)
+);
+CREATE POLICY "Allow approved access to email_logs" ON email_logs FOR ALL TO authenticated USING (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_approved = TRUE)
+);

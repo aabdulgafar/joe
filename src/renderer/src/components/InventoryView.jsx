@@ -29,7 +29,19 @@ function InventoryView() {
 
   const handleAddItem = async (e) => {
     e.preventDefault()
-    const result = await window.api.inventory.addItem(newItem)
+    
+    // Sanitize data for Supabase
+    const sanitizedItem = {
+      ...newItem,
+      supplier_id: newItem.supplier_id ? parseInt(newItem.supplier_id) : null,
+      quantity: parseFloat(newItem.quantity) || 0,
+      cost_per_unit: parseFloat(newItem.cost_per_unit) || 0,
+      threshold: parseFloat(newItem.threshold) || 10,
+      expiry_date: newItem.expiry_date || null,
+      batch_number: newItem.batch_number || null
+    }
+
+    const result = await window.api.inventory.addItem(sanitizedItem)
     if (result.success) {
       setIsModalOpen(false)
       fetchData()
@@ -37,6 +49,8 @@ function InventoryView() {
         name: '', category: 'finished', quantity: 0, unit: 'kg', threshold: 10, cost_per_unit: 0, 
         supplier_id: '', batch_number: '', expiry_date: ''
       })
+    } else {
+      alert('Error adding item: ' + result.message)
     }
   }
 

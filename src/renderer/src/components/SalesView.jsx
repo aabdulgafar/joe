@@ -58,15 +58,28 @@ function SalesView() {
 
     let successCount = 0
     for (const item of cart) {
+      const quantity = parseFloat(item.quantity)
+      const revenue = parseFloat(item.cost_per_unit) * quantity
+      
+      if (isNaN(quantity) || isNaN(revenue)) {
+        alert(`Invalid data for ${item.name}. Skipping.`)
+        continue
+      }
+
       const result = await window.api.inventory.updateStock({
-        itemId: item.id,
+        itemId: parseInt(item.id),
         type: 'OUT',
-        quantity: item.quantity,
+        quantity: quantity,
         userId: user.id,
-        revenue: item.cost_per_unit * item.quantity,
-        customerId: parseInt(selectedCustomerId)
+        revenue: revenue,
+        customerId: selectedCustomerId ? parseInt(selectedCustomerId) : null
       })
+      
       if (result.success) successCount++
+      else {
+        console.error(`Sale Error [${item.name}]:`, result.message)
+        alert(`Error processing ${item.name}: ${result.message}`)
+      }
     }
 
     if (successCount === cart.length) {
